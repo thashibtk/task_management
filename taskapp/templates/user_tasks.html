@@ -1,0 +1,353 @@
+{% extends 'base.html' %}
+{% block title %}My Tasks{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2 class="mb-4">
+        <i class="bi bi-list-task text-primary me-2"></i>My Tasks
+    </h2>
+
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Title</th>
+                        <th>Status</th>
+                        <th>Deadline</th>
+                        <th>Worked Hours</th>
+                        <th>Completion Report</th>
+                        <th class="text-center">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="user-task-body"></tbody>
+            </table>
+        </div>
+    </div>
+    
+    <div class="alert alert-info mt-4" role="alert" id="no-tasks" style="display: none;">
+        <i class="bi bi-info-circle me-2"></i>You don't have any assigned tasks at the moment.
+    </div>
+</div>
+
+<div class="modal fade" id="completionModal" tabindex="-1" aria-labelledby="completionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">
+                    <i class="bi bi-check-circle me-2"></i>Submit Completion Details
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="modal-task-id">
+                <div class="mb-3">
+                    <label for="modal-report" class="form-label">Completion Report</label>
+                    <textarea id="modal-report" class="form-control" rows="5" placeholder="Please provide details about how you completed this task..."></textarea>
+                    <div class="invalid-feedback" id="report-feedback">
+                        Completion report is required.
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label for="modal-hours" class="form-label">Hours Worked</label>
+                    <input type="number" id="modal-hours" class="form-control" min="0" step="0.5" placeholder="Enter total hours worked">
+                    <div class="invalid-feedback" id="hours-feedback">
+                        Please enter valid worked hours.
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle me-1"></i>Cancel
+                </button>
+                <button type="button" class="btn btn-primary" onclick="submitCompletion()">
+                    <i class="bi bi-check2 me-1"></i>Mark as Completed
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="statusUpdateModal" tabindex="-1" aria-labelledby="statusUpdateModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">
+                    <i class="bi bi-arrow-clockwise me-2"></i>Update Task Status
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="status-task-id">
+                <div class="mb-3">
+                    <label for="task-status" class="form-label">Select Status</label>
+                    <select id="task-status" class="form-select">
+                        <option value="pending">Pending</option>
+                        <option value="in progress">In Progress</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle me-1"></i>Cancel
+                </button>
+                <button type="button" class="btn btn-primary" onclick="updateTaskStatus()">
+                    <i class="bi bi-save me-1"></i>Update Status
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', fetchUserTasks);
+
+async function fetchUserTasks() {
+    const token = localStorage.getItem('access_token');
+    try {
+        const res = await fetch('/api/user-tasks/', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error('Fetch failed');
+        const tasks = await res.json();
+
+        const tbody = document.getElementById('user-task-body');
+        const noTasksAlert = document.getElementById('no-tasks');
+        
+        tbody.innerHTML = '';
+        
+        if (tasks.length === 0) {
+            noTasksAlert.style.display = 'block';
+            return;
+        }
+        
+        noTasksAlert.style.display = 'none';
+        
+        tasks.forEach(task => {
+            const dueDate = new Date(task.due_date);
+            const isPastDue = dueDate < new Date() && task.status !== 'completed';
+            const dueDateClass = isPastDue ? 'text-danger fw-bold' : '';
+            
+            tbody.innerHTML += `
+                <tr>
+                    <td>${task.title}</td>
+                    <td>
+                        <span class="badge ${getStatusBadgeClass(task.status)}">${capitalizeFirstLetter(task.status)}</span>
+                    </td>
+                    <td class="${dueDateClass}">${dueDate.toLocaleString()}</td>
+                    <td>${task.worked_hours !== null ? task.worked_hours : '-'}</td>
+                    <td>${task.completion_report ? '<i class="bi bi-file-text text-success"></i> Submitted' : '-'}</td>
+                    <td class="text-center">
+                        ${getActionButtons(task)}
+                    </td>
+                </tr>
+            `;
+        });
+    } catch (err) {
+        console.error(err);
+        showToast('Error loading tasks. Please try again later.', 'danger');
+    }
+}
+
+function getActionButtons(task) {
+    if (task.status === 'completed') {
+        return `
+            <button class="btn btn-info btn-sm" onclick="viewTaskReport(${task.id})">
+                <i class="bi bi-eye me-1"></i>View Report
+            </button>
+        `;
+    } else {
+        return `
+            <div class="btn-group">
+                <button class="btn btn-success btn-sm" onclick="openCompletionModal(${task.id})">
+                    <i class="bi bi-check-circle me-1"></i>Complete
+                </button>
+                <button class="btn btn-primary btn-sm" onclick="openStatusModal(${task.id}, '${task.status}')">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Update Status
+                </button>
+            </div>
+        `;
+    }
+}
+
+function getStatusBadgeClass(status) {
+    switch (status.toLowerCase()) {
+        case 'completed':
+            return 'bg-success';
+        case 'pending':
+            return 'bg-warning text-dark';
+        case 'in progress':
+            return 'bg-info text-dark';
+        case 'cancelled':
+            return 'bg-danger';
+        default:
+            return 'bg-secondary';
+    }
+}
+
+function capitalizeFirstLetter(string) {
+    return string.charAt(0).toUpperCase() + string.slice(1);
+}
+
+function openCompletionModal(taskId) {
+    const reportField = document.getElementById('modal-report');
+    const hoursField = document.getElementById('modal-hours');
+    
+    reportField.value = '';
+    reportField.classList.remove('is-invalid');
+    
+    hoursField.value = '';
+    hoursField.classList.remove('is-invalid');
+    
+    document.getElementById('modal-task-id').value = taskId;
+    new bootstrap.Modal(document.getElementById('completionModal')).show();
+}
+
+function openStatusModal(taskId, currentStatus) {
+    document.getElementById('status-task-id').value = taskId;
+    const statusSelect = document.getElementById('task-status');
+    
+    for (let i = 0; i < statusSelect.options.length; i++) {
+        if (statusSelect.options[i].value === currentStatus) {
+            statusSelect.selectedIndex = i;
+            break;
+        }
+    }
+    
+    new bootstrap.Modal(document.getElementById('statusUpdateModal')).show();
+}
+
+async function submitCompletion() {
+    const token = localStorage.getItem('access_token');
+    const taskId = document.getElementById('modal-task-id').value;
+    const reportField = document.getElementById('modal-report');
+    const hoursField = document.getElementById('modal-hours');
+    
+    const completion_report = reportField.value.trim();
+    const worked_hours = hoursField.value.trim();
+    
+    let isValid = true;
+    
+    if (!completion_report) {
+        reportField.classList.add('is-invalid');
+        isValid = false;
+    } else {
+        reportField.classList.remove('is-invalid');
+    }
+    
+    if (!worked_hours || isNaN(worked_hours) || parseFloat(worked_hours) < 0) {
+        hoursField.classList.add('is-invalid');
+        isValid = false;
+    } else {
+        hoursField.classList.remove('is-invalid');
+    }
+    
+    if (!isValid) return;
+
+    try {
+        const res = await fetch(`/api/tasks/update-status/${taskId}/`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                status: 'completed',
+                completion_report,
+                worked_hours
+            })
+        });
+
+        if (!res.ok) {
+            const errData = await res.json();
+            showToast(errData.error || 'Failed to update task.', 'danger');
+            return;
+        }
+
+        bootstrap.Modal.getInstance(document.getElementById('completionModal')).hide();
+        showToast('Task marked as completed successfully!', 'success');
+        fetchUserTasks();
+    } catch (err) {
+        console.error(err);
+        showToast('An error occurred. Please try again.', 'danger');
+    }
+}
+
+async function updateTaskStatus() {
+    const token = localStorage.getItem('access_token');
+    const taskId = document.getElementById('status-task-id').value;
+    const statusValue = document.getElementById('task-status').value;
+
+    try {
+        const res = await fetch(`/api/tasks/update-status/${taskId}/`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                status: statusValue
+            })
+        });
+
+        if (!res.ok) {
+            const errData = await res.json();
+            showToast(errData.error || 'Failed to update task status.', 'danger');
+            return;
+        }
+
+        bootstrap.Modal.getInstance(document.getElementById('statusUpdateModal')).hide();
+        showToast('Task status updated successfully!', 'success');
+        fetchUserTasks();
+    } catch (err) {
+        console.error(err);
+        showToast('An error occurred. Please try again.', 'danger');
+    }
+}
+
+function viewTaskReport(taskId) {
+    window.location.href = `/tasks/${taskId}/report-page/`;
+}
+
+function showToast(message, type = 'info') {
+    let toastContainer = document.querySelector('.toast-container');
+    if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+        document.body.appendChild(toastContainer);
+    }
+    
+    const toastId = 'toast-' + Date.now();
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white bg-${type} border-0`;
+    toast.id = toastId;
+    toast.setAttribute('role', 'alert');
+    toast.setAttribute('aria-live', 'assertive');
+    toast.setAttribute('aria-atomic', 'true');
+    
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+    `;
+    
+    toastContainer.appendChild(toast);
+    
+    const bsToast = new bootstrap.Toast(toast, {
+        autohide: true,
+        delay: 3000
+    });
+    bsToast.show();
+    
+    toast.addEventListener('hidden.bs.toast', function() {
+        toast.remove();
+    });
+}
+</script>
+{% endblock %}
